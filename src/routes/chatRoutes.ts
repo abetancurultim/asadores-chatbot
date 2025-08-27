@@ -27,11 +27,51 @@ import { getAvailableChatOn } from "../utils/getAvailableChatOn.js";
 import { getAvailableForAudio } from "../utils/getAvailableForAudio.js";
 import { appWithMemory } from "../agents/mainAgent.js";
 import { getCampaignOrigin } from "../utils/campaignDetector.js";
+import { supabase } from "../utils/saveHistoryDb.js";
+
+// Interfaces para tipos de Twilio
+interface TwilioStatusWebhook {
+  MessageSid: string;
+  MessageStatus:
+    | "queued"
+    | "sent"
+    | "delivered"
+    | "read"
+    | "failed"
+    | "undelivered";
+  To: string;
+  From: string;
+  ErrorCode?: string;
+  ErrorMessage?: string;
+  Timestamp?: string;
+  [key: string]: any; // Para otros campos que puedan venir en el webhook
+}
+
+interface MessageStatusHistory {
+  message_id: string;
+  twilio_sid: string;
+  status: string;
+  previous_status: string;
+  error_code: string | null;
+  error_message: string | null;
+  raw_webhook: any;
+}
+
+interface MessageUpdateData {
+  status: string;
+  error_code: string | null;
+  error_message: string | null;
+  sent_at?: string;
+  delivered_at?: string;
+  read_at?: string;
+  failed_at?: string;
+}
 
 const router = express.Router();
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+const statusCallbackUrl = `https://ultim.online`;
 
 dotenv.config();
 
@@ -1251,6 +1291,7 @@ router.post("/asadores/receive-message", async (req, res) => {
               from: to,
               to: from,
               mediaUrl: [audioUrl],
+              statusCallback: `${statusCallbackUrl}/asadores/webhook/status`,
             });
 
             // Actualizar el mensaje de la IA con el SID del audio enviado
@@ -1287,6 +1328,7 @@ router.post("/asadores/receive-message", async (req, res) => {
               body: part,
               from: to,
               to: from,
+              statusCallback: `${statusCallbackUrl}/asadores/webhook/status`,
             });
             console.log(part);
             console.log("-------------------");
@@ -1301,6 +1343,7 @@ router.post("/asadores/receive-message", async (req, res) => {
             body: responseMessage,
             from: to,
             to: from,
+            statusCallback: `${statusCallbackUrl}/asadores/webhook/status`,
           });
           console.log("Message sent successfully:", message.sid);
           if (messageId && message.sid) {
@@ -1455,6 +1498,7 @@ router.post("/asadores/chat-dashboard", async (req, res) => {
             // from: "whatsapp:+5742044644",
             from: `whatsapp:+14155238886`,
             mediaUrl: [audioUrl],
+            statusCallback: `${statusCallbackUrl}/asadores/webhook/status`,
           });
 
           // Actualizar con el SID de Twilio
@@ -1491,6 +1535,7 @@ router.post("/asadores/chat-dashboard", async (req, res) => {
         // from: "whatsapp:+5742044644",
         from: `whatsapp:+14155238886`,
         mediaUrl: [newMessage],
+        statusCallback: `${statusCallbackUrl}/asadores/webhook/status`,
       });
 
       // Actualizar con el SID de Twilio
@@ -1517,6 +1562,7 @@ router.post("/asadores/chat-dashboard", async (req, res) => {
         from: `whatsapp:+14155238886`,
         to: `whatsapp:${clientNumber}`,
         body: newMessage,
+        statusCallback: `${statusCallbackUrl}/asadores/webhook/status`,
       });
 
       // Actualizar con el SID de Twilio
@@ -1552,6 +1598,7 @@ router.post("/asadores/send-template", async (req, res) => {
       contentSid: templateId,
       // messagingServiceSid: "MGe5ebd75ff86ad20dbe6c0c1d09bfc081",
       contentVariables: JSON.stringify({ 1: name, 2: agentName }),
+      statusCallback: `${statusCallbackUrl}/asadores/webhook/status`,
     });
     console.log("body", message.body);
 
@@ -1609,9 +1656,193 @@ router.get("/asadores/message/:sid", async (req, res) => {
   }
 });
 
+router.post(
+  "/asadores/webhook/status",
+  async (req: express.Request, res: express.Response) => {
+    try {
+      const {
+        MessageSid,
+        MessageStatus,
+        To,
+        From,
+        ErrorCode,
+        ErrorMessage,
+        Timestamp,
+      }: TwilioStatusWebhook = req.body;
+
+      console.log("📊 === TWILIO STATUS WEBHOOK ===");
+      console.log("MessageSid:", MessageSid);
+      console.log("Status:", MessageStatus);
+      console.log("From:", From);
+      console.log("To:", To);
+
+      // Mapear estados de Twilio a tu sistema
+      const statusMap: Record<string, string> = {
+        queued: "queued",
+        sent: "sent",
+        delivered: "delivered",
+        read: "read",
+        failed: "failed",
+        undelivered: "failed",
+      };
+
+      const mappedStatus = statusMap[MessageStatus] || MessageStatus;
+
+      // Buscar el mensaje por twilio_sid
+      const { data: existingMessage, error: fetchError } = await supabase
+        .from("messages")
+        .select("id, status")
+        .eq("twilio_sid", MessageSid)
+        .single();
+
+      if (fetchError && fetchError.code !== "PGRST116") {
+        console.error("Error fetching message:", fetchError);
+        res.status(200).send("OK"); // Siempre responder 200 a Twilio
+        return;
+      }
+
+      if (!existingMessage) {
+        console.log("⚠️ Message not found for SID:", MessageSid);
+        res.status(200).send("OK");
+        return;
+      }
+
+      const previousStatus = existingMessage.status;
+
+      // Definir jerarquía de estados
+      const statusHierarchy: Record<string, number> = {
+        queued: 1,
+        sent: 2,
+        delivered: 3,
+        read: 4,
+        failed: 5,
+      };
+
+      // Solo actualizar si es un estado "superior" o es un error
+      const isErrorStatus = ["failed", "undelivered"].includes(MessageStatus);
+      const shouldUpdate =
+        isErrorStatus ||
+        statusHierarchy[mappedStatus] > statusHierarchy[previousStatus];
+
+      if (shouldUpdate) {
+        // Preparar datos de actualización
+        const updateData: MessageUpdateData = {
+          status: mappedStatus,
+          error_code: ErrorCode || null,
+          error_message: ErrorMessage || null,
+        };
+
+        // Agregar timestamps específicos
+        switch (mappedStatus) {
+          case "sent":
+            (updateData as any).sent_at = new Date().toISOString();
+            break;
+          case "delivered":
+            (updateData as any).delivered_at = new Date().toISOString();
+            break;
+          case "read":
+            (updateData as any).read_at = new Date().toISOString();
+            break;
+          case "failed":
+            (updateData as any).failed_at = new Date().toISOString();
+            break;
+        }
+
+        // Actualizar el mensaje
+        const { data: updatedMessage, error: updateError } = await supabase
+          .from("messages")
+          .update(updateData)
+          .eq("id", existingMessage.id)
+          .select()
+          .single();
+
+        if (updateError) {
+          console.error("Error updating message:", updateError);
+        } else {
+          console.log(
+            `✅ Updated message ${MessageSid}: ${previousStatus} → ${mappedStatus}`
+          );
+        }
+      }
+
+      // SIEMPRE guardar en el historial (para trazabilidad completa)
+      const historyData: MessageStatusHistory = {
+        message_id: existingMessage.id,
+        twilio_sid: MessageSid,
+        status: mappedStatus,
+        previous_status: previousStatus,
+        error_code: ErrorCode || null,
+        error_message: ErrorMessage || null,
+        raw_webhook: req.body, // Guardar todo el webhook
+      };
+
+      const { error: historyError } = await supabase
+        .from("message_status_history")
+        .insert(historyData);
+
+      if (historyError) {
+        console.error("Error saving history:", historyError);
+      }
+
+      console.log("================================");
+      res.status(200).send("OK");
+    } catch (error) {
+      console.error("❌ Critical error in webhook:", error);
+      // SIEMPRE responder 200 a Twilio para evitar reintentos
+      res.status(200).send("OK");
+    }
+  }
+);
+
+// Endpoint para obtener el historial completo de estados de un mensaje
+router.get("/asadores/message-status/:sid", async (req, res) => {
+  try {
+    const { sid } = req.params;
+    
+    // Obtener el mensaje actual
+    const { data: message, error: messageError } = await supabase
+      .from('messages')
+      .select('*')
+      .eq('twilio_sid', sid)
+      .single();
+      
+    if (messageError) {
+      return res.status(404).json({ error: "Message not found" });
+    }
+          
+    // Obtener todo el historial de cambios
+    const { data: history, error: historyError } = await supabase
+      .from("message_status_history")
+      .select("*")
+      .eq("twilio_sid", sid)
+      .order("created_at", { ascending: true });
+
+    res.json({
+      currentStatus: message.status,
+      message: message,
+      statusHistory: history || [],
+      timeline: {
+        sent: message.sent_at,
+        delivered: message.delivered_at,
+        read: message.read_at,
+        failed: message.failed_at,
+      },
+    });
+  } catch (error) {
+    console.error("Error al obtener el estado:", error);
+    let mensajeError = "Error desconocido";
+    if (error instanceof Error) {
+      mensajeError = error.message;
+    }
+    res.status(500).json({ error: mensajeError });
+  }
+});
+
 // Ruta health check
 router.get("/asadores/health", (req, res) => {
-  res.status(200).json({ success: true, message: "Health check - Asadores corriendo" });
+  res
+    .status(200)
+    .json({ success: true, message: "Health check - Asadores corriendo" });
 });
 
 export default router;

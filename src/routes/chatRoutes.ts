@@ -1609,6 +1609,11 @@ router.get("/asadores/message/:sid", async (req, res) => {
   }
 });
 
+// Ruta health check
+router.get("/asadores/health", (req, res) => {
+  res.status(200).json({ success: true, message: "Health check - Asadores corriendo" });
+});
+
 export default router;
 
 export { exportedFromNumber };

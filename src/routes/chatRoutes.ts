@@ -28,6 +28,7 @@ import { getAvailableForAudio } from "../utils/getAvailableForAudio.js";
 import { appWithMemory } from "../agents/mainAgent.js";
 import { getCampaignOrigin } from "../utils/campaignDetector.js";
 import { supabase } from "../utils/saveHistoryDb.js";
+import { delay, getRandomDelay } from "../utils/delayFunctions.js";
 
 // Interfaces para tipos de Twilio
 interface TwilioStatusWebhook {
@@ -1286,6 +1287,11 @@ router.post("/asadores/receive-message", async (req, res) => {
           },
           async () => {
             const audioUrl = await getDownloadURL(uploadTask.snapshot.ref);
+
+            const randomDelay = getRandomDelay(5000, 10000); // Espera entre 5 y 10 segundos
+            console.log(`⏳ Delaying audio response by ${randomDelay / 1000} seconds...`);
+            await delay(randomDelay);
+
             const message = await client.messages.create({
               body: "Audio message",
               from: to,
@@ -1324,6 +1330,11 @@ router.post("/asadores/receive-message", async (req, res) => {
               false,
               ""
             );
+
+            const randomDelay = getRandomDelay(5000, 10000); // Espera entre 5 y 10 segundos
+            console.log(`⏳ Delaying audio response by ${randomDelay / 1000} seconds...`);
+            await delay(randomDelay);
+
             const message = await client.messages.create({
               body: part,
               from: to,
@@ -1339,6 +1350,10 @@ router.post("/asadores/receive-message", async (req, res) => {
         }
       } else {
         try {
+          const randomDelay = getRandomDelay(5000, 10000); // Espera entre 5 y 10 segundos
+          console.log(`⏳ Delaying audio response by ${randomDelay / 1000} seconds...`);
+          await delay(randomDelay);
+
           const message = await client.messages.create({
             body: responseMessage,
             from: to,

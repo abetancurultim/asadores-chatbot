@@ -3,22 +3,19 @@ import { ChatOpenAI } from "@langchain/openai";
 import { createReactAgent } from "@langchain/langgraph/prebuilt";
 import { HumanMessage, SystemMessage, } from "@langchain/core/messages";
 import { MemorySaver } from "@langchain/langgraph";
-import { retrieverTool, conversationExamplesTool } from "../tools/tools.js";
+import { retrieverTool, conversationExamplesTool, searchProductsTool, } from "../tools/tools.js";
 import { MESSAGES, CONVERSATION_EXAMPLES } from "../config/constants.js";
 import { exportedFromNumber } from "../routes/chatRoutes.js";
 dotenv.config();
 const memory = new MemorySaver();
 const llm = new ChatOpenAI({
     model: "gpt-4.1",
-    temperature: 0.9, // Ajusta la temperatura para controlar la creatividad de las respuestas
+    temperature: 0.4, // Ajusta la temperatura para controlar la creatividad de las respuestas
     topP: 1, // Esto ayuda a variar las respuestas y hacerlas más naturales
     apiKey: process.env.OPENAI_API_KEY,
-    maxTokens: 180,
+    maxTokens: 120,
 });
-const tools = [
-    retrieverTool,
-    conversationExamplesTool,
-];
+const tools = [retrieverTool, conversationExamplesTool, searchProductsTool];
 const modifyMessages = async (messages) => {
     const lastUserMessage = messages[messages.length - 1];
     const userText = typeof lastUserMessage.content === "string" ? lastUserMessage.content : "";

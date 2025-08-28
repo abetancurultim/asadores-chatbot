@@ -33,3 +33,44 @@ export const searchVectors = async (query: string) => {
 
   return combineDocuments(results);
 };
+
+/**
+ * Busca conversaciones similares a 'query' en la tabla vectorial de conversaciones.
+ * Muestra ejemplos reales de conversaciones entre asesores y clientes.
+ * @param query Consulta para buscar conversaciones relevantes
+ * @param topK Número máximo de conversaciones a devolver
+ * @returns Ejemplos formateados de conversaciones relevantes
+ */
+export const searchConversations = async (query: string, topK = 5) => {
+  const client = createClient(supabaseUrl, supabaseApiKey);
+
+  const vectorStore = new SupabaseVectorStore(embeddings, {
+    client,
+    tableName: "conversations", // Tabla de conversaciones vectorizadas
+    queryName: "match_conversations", // Asegúrate de crear esta función en Supabase
+  });
+
+  console.log("Buscando conversaciones relevantes...");
+  const results = await vectorStore.similaritySearch(query, topK);
+
+  // Formatear los resultados para mostrar la conversación de manera legible
+  const conversationsResults = results
+    .map((doc) => {
+      const metadata = doc.metadata;
+
+      // Formato con pregunta-respuesta y contexto
+      return `
+        ### ${metadata.intent || "Conversación"}
+
+        **Cliente**: ${metadata.question || doc.pageContent}
+
+        **Asesor**: ${metadata.answer || ""}
+
+        ${metadata.outcome ? `*Resultado: ${metadata.outcome}*` : ""}
+        `;
+    })
+    .join("\n---\n");
+
+  console.log(`Se encontraron ${results.length} conversaciones relevantes`);
+  return conversationsResults;
+};

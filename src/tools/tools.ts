@@ -1,8 +1,7 @@
 // @ts-nocheck
 import { tool } from "@langchain/core/tools";
 import { z } from "zod";
-import { contactCustomerService } from "../utils/functions.js";
-import { searchVectors } from "../utils/retrievers.js";
+import { searchConversations, searchVectors } from "../utils/retrievers.js";
 
 export const retrieverTool = tool(
   async ({ query }: { query: string }) => {
@@ -12,22 +11,29 @@ export const retrieverTool = tool(
   {
     name: "retriever",
     description:
-      "Eres una herramienta de consulta de información sobre Fénix. Tu tarea es buscar y extraer solo la información relevante de la base de datos, respondiendo a las consultas de los clientes. Siempre entrega el resultado bien formateado para que sea facil de leer. Usa esta herramienta para responder preguntas específicas sobre preguntas frecuentes, politicas de devolucion e informacion general de la empresa, productos a la venta.",
+      "Eres una herramienta de consulta de información sobre Asadores El Barril. Tu tarea es buscar y extraer solo la información relevante de la base de datos, respondiendo a las consultas de los clientes. Siempre entrega el resultado bien formateado para que sea facil de leer. Usa esta herramienta para responder preguntas específicas sobre preguntas frecuentes, politicas de devolucion e informacion general de la empresa, productos a la venta.",
     schema: z.object({
       query: z.string(),
     }),
   }
 );
 
-export const contactTool = tool(
-  async () => {
-    const contact = contactCustomerService();
-    return contact;
+// Tool para buscar ejemplos de conversaciones
+export const conversationExamplesTool = tool(
+  async ({ query }: { query: string }) => {
+    const results = await searchConversations(query);
+    return results;
   },
   {
-    name: "contacto_servicio_cliente",
+    name: "conversation_examples",
     description:
-      "Brinda el canal de contacto para otros servicios diferentes a los servicios contables y de revisoría fiscal ofrecidos por Fenix Medellín. Esta tool se debe ejecutar cuando el cliente solicita información sobre otros servicios diferentes a los mencionados anteriormente.",
-    schema: z.object({}),
+      "Busca ejemplos de conversaciones reales entre asesores y clientes para usar como referencia. Utiliza esta herramienta cuando necesites ejemplos de cómo los asesores humanos responden a situaciones similares, o cuando quieras imitar el estilo conversacional natural de un asesor de Asadores El Barril.",
+    schema: z.object({
+      query: z
+        .string()
+        .describe(
+          "La situación o consulta para la que necesitas ejemplos de conversación"
+        ),
+    }),
   }
 );

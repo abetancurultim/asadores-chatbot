@@ -1656,9 +1656,7 @@ router.get("/asadores/message/:sid", async (req, res) => {
   }
 });
 
-router.post(
-  "/asadores/webhook/status",
-  async (req: express.Request, res: express.Response) => {
+router.post("/asadores/webhook/status", async (req: express.Request, res: express.Response) => {
     try {
       const {
         MessageSid,
@@ -1676,7 +1674,7 @@ router.post(
       console.log("From:", From);
       console.log("To:", To);
 
-      // Mapear estados de Twilio a tu sistema
+      // Mapear estados de Twilio
       const statusMap: Record<string, string> = {
         queued: "queued",
         sent: "sent",

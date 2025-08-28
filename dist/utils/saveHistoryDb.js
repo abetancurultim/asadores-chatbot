@@ -176,7 +176,7 @@ export async function saveChatHistory(clientNumber, newMessage, isClient, newMed
                         // -----------------------------
                         // Temporal: campañas también inician en HUMANO (IA apagada)
                         // Antes: campaign => false (IA), organic => true (humano)
-                        chat_on: true,
+                        chat_on: false,
                         origin: origin || "organic", // Guardar el origen de la conversación
                     },
                 ])
@@ -312,7 +312,7 @@ export async function saveTemplateChatHistory(clientNumber, newMessage, isClient
                         nit: nit,
                         company: company,
                         category: category,
-                        chat_on: true,
+                        chat_on: false,
                     },
                 ])
                     .select("id")

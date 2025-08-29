@@ -1288,7 +1288,7 @@ router.post("/asadores/receive-message", async (req, res) => {
           async () => {
             const audioUrl = await getDownloadURL(uploadTask.snapshot.ref);
 
-            const randomDelay = getRandomDelay(5000, 10000); // Espera entre 5 y 10 segundos
+            const randomDelay = getRandomDelay(15000, 25000); // Espera entre 15 y 25 segundos
             console.log(`⏳ Delaying audio response by ${randomDelay / 1000} seconds...`);
             await delay(randomDelay);
 
@@ -1331,7 +1331,7 @@ router.post("/asadores/receive-message", async (req, res) => {
               ""
             );
 
-            const randomDelay = getRandomDelay(5000, 10000); // Espera entre 5 y 10 segundos
+            const randomDelay = getRandomDelay(15000, 25000); // Espera entre 15 y 25 segundos
             console.log(`⏳ Delaying audio response by ${randomDelay / 1000} seconds...`);
             await delay(randomDelay);
 
@@ -1350,7 +1350,7 @@ router.post("/asadores/receive-message", async (req, res) => {
         }
       } else {
         try {
-          const randomDelay = getRandomDelay(5000, 10000); // Espera entre 5 y 10 segundos
+          const randomDelay = getRandomDelay(15000, 25000); // Espera entre 15 y 25 segundos
           console.log(`⏳ Delaying audio response by ${randomDelay / 1000} seconds...`);
           await delay(randomDelay);
 

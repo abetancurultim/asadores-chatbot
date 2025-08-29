@@ -896,7 +896,7 @@ router.post("/asadores/receive-message", async (req, res) => {
                     throw new Error(`Upload failed: ${error.message}`);
                 }, async () => {
                     const audioUrl = await getDownloadURL(uploadTask.snapshot.ref);
-                    const randomDelay = getRandomDelay(5000, 10000); // Espera entre 5 y 10 segundos
+                    const randomDelay = getRandomDelay(15000, 25000); // Espera entre 15 y 25 segundos
                     console.log(`⏳ Delaying audio response by ${randomDelay / 1000} seconds...`);
                     await delay(randomDelay);
                     const message = await client.messages.create({
@@ -930,7 +930,7 @@ router.post("/asadores/receive-message", async (req, res) => {
                 for (let part of messageParts) {
                     if (part !== "") {
                         const partMessageId = await saveChatHistory(fromNumber, part, false, "");
-                        const randomDelay = getRandomDelay(5000, 10000); // Espera entre 5 y 10 segundos
+                        const randomDelay = getRandomDelay(15000, 25000); // Espera entre 15 y 25 segundos
                         console.log(`⏳ Delaying audio response by ${randomDelay / 1000} seconds...`);
                         await delay(randomDelay);
                         const message = await client.messages.create({
@@ -949,7 +949,7 @@ router.post("/asadores/receive-message", async (req, res) => {
             }
             else {
                 try {
-                    const randomDelay = getRandomDelay(5000, 10000); // Espera entre 5 y 10 segundos
+                    const randomDelay = getRandomDelay(15000, 25000); // Espera entre 15 y 25 segundos
                     console.log(`⏳ Delaying audio response by ${randomDelay / 1000} seconds...`);
                     await delay(randomDelay);
                     const message = await client.messages.create({

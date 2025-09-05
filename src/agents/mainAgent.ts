@@ -24,7 +24,7 @@ const llm = new ChatOpenAI({
   temperature: 0.4, // Ajusta la temperatura para controlar la creatividad de las respuestas
   topP: 1, // Esto ayuda a variar las respuestas y hacerlas más naturales
   apiKey: process.env.OPENAI_API_KEY,
-  maxTokens: 120,
+  maxTokens: 220,
 });
 
 const tools = [retrieverTool, conversationExamplesTool, searchProductsTool];

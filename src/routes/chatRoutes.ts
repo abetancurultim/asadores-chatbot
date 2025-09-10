@@ -1603,7 +1603,10 @@ router.post("/asadores/chat-dashboard", async (req, res) => {
             "Audio message",
             false,
             newMessage, // URL original del dashboard
-            userName
+            userName,
+            undefined, // origin
+            undefined, // fileName
+            advisorId  // advisor_id
           );
 
           // Envía el archivo de audio a través de Twilio

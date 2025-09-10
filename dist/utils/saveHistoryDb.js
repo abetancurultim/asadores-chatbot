@@ -9,17 +9,22 @@ const CHAT_HISTORY_TABLE = "chat_history";
 const MESSAGES_TABLE = "messages";
 export const supabase = createClient(supabaseUrl, supabaseKey);
 // Función para guardar o actualizar el historial del chat
-export async function saveChatHistory(clientNumber, newMessage, isClient, newMediaUrl, customSender, origin, fileName) {
+export async function saveChatHistory(clientNumber, newMessage, isClient, newMediaUrl, customSender, origin, fileName, advisorId // Nuevo parámetro para el ID del asesor
+) {
     try {
         const firebaseMediaUrl = newMediaUrl ? newMediaUrl : "";
-        // Buscar la conversación más reciente para este número (sin restricción de tiempo)
-        const { data: existingConversation, error: fetchError } = await supabase
+        // Buscar la conversación más reciente para este número y asesor
+        let conversationQuery = supabase
             .from(CHAT_HISTORY_TABLE)
-            .select("id, created_at")
+            .select("id, created_at, advisor_id")
             .eq("client_number", clientNumber)
             .order("created_at", { ascending: false })
-            .limit(1)
-            .maybeSingle();
+            .limit(1);
+        // Si tenemos advisor_id, incluirlo en la búsqueda
+        if (advisorId) {
+            conversationQuery = conversationQuery.eq("advisor_id", advisorId);
+        }
+        const { data: existingConversation, error: fetchError } = await conversationQuery.maybeSingle();
         if (fetchError) {
             throw new Error(`Error fetching data: ${fetchError.message}`);
         }
@@ -171,6 +176,7 @@ export async function saveChatHistory(clientNumber, newMessage, isClient, newMed
                         nit: nit,
                         company: company,
                         category: category,
+                        advisor_id: advisorId, // Agregar advisor_id aquí
                         // -----------------------------
                         //chat_on: origin === "campaign" ? false : true, // FALSE si campaña = IA, TRUE si orgánico = human
                         // -----------------------------
@@ -183,24 +189,28 @@ export async function saveChatHistory(clientNumber, newMessage, isClient, newMed
                     .select("id")
                     .single();
                 if (insertError) {
-                    // Si hay error de duplicado, intentar buscar la conversación que se creó
+                    // Si hay error de duplicado, intentar buscar la conversación que se creó para este asesor específico
                     console.log("Conflict detected, searching for existing conversation...");
-                    const { data: conflictConversation, error: conflictFetchError } = await supabase
+                    let conflictQuery = supabase
                         .from(CHAT_HISTORY_TABLE)
                         .select("id")
                         .eq("client_number", clientNumber)
                         .order("created_at", { ascending: false })
-                        .limit(1)
-                        .single();
+                        .limit(1);
+                    // Si tenemos advisor_id, incluirlo en la búsqueda de conflicto para asegurar consistencia
+                    if (advisorId) {
+                        conflictQuery = conflictQuery.eq("advisor_id", advisorId);
+                    }
+                    const { data: conflictConversation, error: conflictFetchError } = await conflictQuery.single();
                     if (conflictFetchError) {
                         throw new Error(`Error handling conflict: ${conflictFetchError.message}`);
                     }
                     conversationId = conflictConversation.id;
-                    console.log(`Using conversation created by concurrent request: ${conversationId}`);
+                    console.log(`Using conversation created by concurrent request: ${conversationId} for advisor ${advisorId || 'any'}`);
                 }
                 else {
                     conversationId = newConversation.id;
-                    console.log(`Created new conversation ${conversationId} for ${clientNumber}`);
+                    console.log(`Created new conversation ${conversationId} for ${clientNumber} with advisor ${advisorId || 'any'}`);
                 }
             }
             catch (createError) {
@@ -213,6 +223,7 @@ export async function saveChatHistory(clientNumber, newMessage, isClient, newMed
             .insert([
             {
                 conversation_id: conversationId,
+                advisor_id: advisorId, // Agregar advisor_id aquí
                 sender: customSender || (isClient ? "client_message" : "agent_message"),
                 message: newMessage,
                 url: firebaseMediaUrl,
@@ -234,25 +245,30 @@ export async function saveChatHistory(clientNumber, newMessage, isClient, newMed
     }
 }
 // Función para guardar mensajes de plantillas
-export async function saveTemplateChatHistory(clientNumber, newMessage, isClient, newMediaUrl, user) {
+export async function saveTemplateChatHistory(clientNumber, newMessage, isClient, newMediaUrl, user, advisorId // Agregar advisor_id como parámetro
+) {
     try {
         const firebaseMediaUrl = newMediaUrl ? newMediaUrl : "";
-        // Buscar la conversación más reciente para este número (sin restricción de tiempo)
-        const { data: existingConversation, error: fetchError } = await supabase
+        // Buscar la conversación más reciente para este número y asesor específico
+        let conversationQuery = supabase
             .from(CHAT_HISTORY_TABLE)
-            .select("id, created_at")
+            .select("id, created_at, advisor_id")
             .eq("client_number", clientNumber)
             .order("created_at", { ascending: false })
-            .limit(1)
-            .maybeSingle();
+            .limit(1);
+        // Si tenemos advisor_id, incluirlo en la búsqueda para plantillas específicas del asesor
+        if (advisorId) {
+            conversationQuery = conversationQuery.eq("advisor_id", advisorId);
+        }
+        const { data: existingConversation, error: fetchError } = await conversationQuery.maybeSingle();
         if (fetchError) {
             throw new Error(`Error fetching data: ${fetchError.message}`);
         }
         let conversationId;
         if (existingConversation) {
-            // Si ya existe una conversación, usar su ID
+            // Si ya existe una conversación para este asesor específico, usar su ID
             conversationId = existingConversation.id;
-            console.log(`Using existing conversation ${conversationId} for template to ${clientNumber}`);
+            console.log(`Using existing conversation ${conversationId} for template to ${clientNumber} with advisor ${advisorId || 'any'}`);
             // Desarchivar conversación si está archivada cuando se envía una plantilla
             const { data: statusData, error: statusError } = await supabase
                 .from(CHAT_HISTORY_TABLE)
@@ -312,21 +328,26 @@ export async function saveTemplateChatHistory(clientNumber, newMessage, isClient
                         nit: nit,
                         company: company,
                         category: category,
+                        advisor_id: advisorId, // Agregar advisor_id para plantillas también
                         chat_on: false,
                     },
                 ])
                     .select("id")
                     .single();
                 if (insertError) {
-                    // Si hay error de duplicado, intentar buscar la conversación que se creó
+                    // Si hay error de duplicado, intentar buscar la conversación que se creó para este asesor
                     console.log("Template conflict detected, searching for existing conversation...");
-                    const { data: conflictConversation, error: conflictFetchError } = await supabase
+                    let conflictQuery = supabase
                         .from(CHAT_HISTORY_TABLE)
                         .select("id")
                         .eq("client_number", clientNumber)
                         .order("created_at", { ascending: false })
-                        .limit(1)
-                        .single();
+                        .limit(1);
+                    // Si tenemos advisor_id, incluirlo en la búsqueda de conflicto
+                    if (advisorId) {
+                        conflictQuery = conflictQuery.eq("advisor_id", advisorId);
+                    }
+                    const { data: conflictConversation, error: conflictFetchError } = await conflictQuery.single();
                     if (conflictFetchError) {
                         throw new Error(`Error handling template conflict: ${conflictFetchError.message}`);
                     }
@@ -335,7 +356,7 @@ export async function saveTemplateChatHistory(clientNumber, newMessage, isClient
                 }
                 else {
                     conversationId = newConversation.id;
-                    console.log(`Created new conversation ${conversationId} for template to ${clientNumber}`);
+                    console.log(`Created new conversation ${conversationId} for template to ${clientNumber} with advisor ${advisorId || 'any'}`);
                 }
             }
             catch (createError) {
@@ -348,6 +369,7 @@ export async function saveTemplateChatHistory(clientNumber, newMessage, isClient
             .insert([
             {
                 conversation_id: conversationId,
+                advisor_id: advisorId, // Agregar advisor_id también a los mensajes de plantilla
                 sender: user, // Usar el usuario específico para plantillas
                 message: newMessage,
                 url: firebaseMediaUrl,

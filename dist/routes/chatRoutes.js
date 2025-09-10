@@ -5,6 +5,7 @@ import { HumanMessage } from "@langchain/core/messages";
 import fetch from "node-fetch";
 import { OpenAI, toFile } from "openai";
 import twilio from "twilio";
+import NodeCache from 'node-cache'; // Importar caché
 import { initializeApp } from "firebase/app";
 import { getDownloadURL, getStorage, ref, uploadBytesResumable, } from "firebase/storage";
 import { ElevenLabsClient } from "elevenlabs";
@@ -26,8 +27,12 @@ const __dirname = path.dirname(__filename);
 const statusCallbackUrl = `https://ultim.online`;
 dotenv.config();
 const MessagingResponse = twilio.twiml.MessagingResponse; // mandar un texto simple
-const accountSid = process.env.TWILIO_ACCOUNT_SID;
-const authToken = process.env.TWILIO_AUTH_TOKEN;
+// ----------
+// const accountSid = process.env.TWILIO_ACCOUNT_SID;
+// const authToken = process.env.TWILIO_AUTH_TOKEN;
+const accountSid = process.env.TWILIO_ULTIM_ACCOUNT_SID;
+const authToken = process.env.TWILIO_ULTIM_AUTH_TOKEN;
+// ---------
 const client = twilio(accountSid, authToken); // mandar un texto con media
 const openai = new OpenAI({
     apiKey: process.env.OPENAI_API_KEY,
@@ -36,6 +41,26 @@ const openai = new OpenAI({
 const elevenlabsClient = new ElevenLabsClient({
     apiKey: process.env.ELEVENLABS_API_KEY,
 });
+// Caché para asesores (24 horas)
+const advisorCache = new NodeCache({ stdTTL: 86400 });
+// Función para obtener asesor por número de Twilio
+const getAdvisorByTwilioNumber = async (twilioNumber) => {
+    // Intentar desde caché primero
+    let advisor = advisorCache.get(`advisor_${twilioNumber}`);
+    if (!advisor) {
+        const { data } = await supabase
+            .from('advisors')
+            .select('*')
+            .eq('twilio_phone_number', twilioNumber)
+            .eq('is_active', true)
+            .single();
+        if (data) {
+            advisorCache.set(`advisor_${twilioNumber}`, data);
+            advisor = data;
+        }
+    }
+    return advisor || null;
+};
 const firebaseConfig = {
     apiKey: process.env.FIREBASE_API_KEY,
     authDomain: process.env.FIREBASE_AUTH_DOMAIN,
@@ -64,6 +89,7 @@ let globalConfig = {
     configurable: {
         thread_id: "",
         phone_number: "",
+        advisor_id: "",
     },
 };
 // Función helper para reintentar la descarga de media cuando Twilio aún no ha terminado de procesarla
@@ -107,11 +133,22 @@ router.post("/asadores/receive-message", async (req, res) => {
         res.end(twiml.toString());
         return;
     }
+    // 🔥 DETECTAR ASESOR BASADO EN EL NÚMERO DE TWILIO
+    const advisor = await getAdvisorByTwilioNumber(toNumber);
+    if (!advisor) {
+        console.error(`❌ No advisor found for Twilio number: ${toNumber}`);
+        res.writeHead(200, { "Content-Type": "text/xml" });
+        res.end(twiml.toString());
+        return;
+    }
+    console.log(`📞 Message for advisor: ${advisor.name} (${advisor.twilio_phone_number})`);
     exportedFromNumber = fromNumber;
+    // Actualizar globalConfig para incluir advisor_id
     globalConfig = {
         configurable: {
-            thread_id: fromNumber,
+            thread_id: `${advisor.id}_${fromNumber}`, // Hilo único por asesor+cliente
             phone_number: fromNumber,
+            advisor_id: advisor.id
         },
     };
     try {
@@ -796,24 +833,32 @@ router.post("/asadores/receive-message", async (req, res) => {
         // Primero guardar el mensaje (esto creará la conversación si no existe)
         let incomingMessageId;
         if (audioUrl) {
-            incomingMessageId = await saveChatHistory(fromNumber, incomingMessage, true, audioUrl, undefined, campaignOrigin);
+            incomingMessageId = await saveChatHistory(fromNumber, incomingMessage, true, audioUrl, undefined, campaignOrigin, undefined, // fileName
+            advisor.id // advisor_id
+            );
         }
         else if (vCardUrl) {
-            incomingMessageId = await saveChatHistory(fromNumber, incomingMessage, true, vCardUrl, undefined, campaignOrigin);
+            incomingMessageId = await saveChatHistory(fromNumber, incomingMessage, true, vCardUrl, undefined, campaignOrigin, undefined, // fileName
+            advisor.id // advisor_id
+            );
         }
         else if (documentUrl) {
-            incomingMessageId = await saveChatHistory(fromNumber, incomingMessage, true, documentUrl, undefined, campaignOrigin);
+            incomingMessageId = await saveChatHistory(fromNumber, incomingMessage, true, documentUrl, undefined, campaignOrigin, undefined, // fileName
+            advisor.id // advisor_id
+            );
         }
         else {
-            incomingMessageId = await saveChatHistory(fromNumber, incomingMessage, true, firebaseImageUrl, undefined, campaignOrigin);
+            incomingMessageId = await saveChatHistory(fromNumber, incomingMessage, true, firebaseImageUrl, undefined, campaignOrigin, undefined, // fileName
+            advisor.id // advisor_id
+            );
         }
         // Actualizar con el SID del mensaje entrante
         if (incomingMessageId && incomingMessageSid) {
             await updateMessageTwilioSid(incomingMessageId, incomingMessageSid);
         }
-        // AHORA consultar el estado (la conversación ya existe con el chat_on correcto)
-        const chatOn = await getAvailableChatOn(fromNumber);
-        console.log("🔍 Chat On validation result:", chatOn);
+        // AHORA consultar el estado específico para este asesor
+        const chatOn = await getAvailableChatOn(fromNumber, advisor.id);
+        console.log(`🔍 Chat On validation result for advisor ${advisor.name}:`, chatOn);
         // 🚨 VALIDACIÓN CRÍTICA: Solo proceder con IA si chatOn es explícitamente FALSE
         if (chatOn === true) {
             console.log("👤 HUMAN ATTENTION MODE - Stopping AI processing");
@@ -836,11 +881,12 @@ router.post("/asadores/receive-message", async (req, res) => {
             res.end(twiml.toString());
             return;
         }
-        // configuración para crear hilos de conversación en el agente y manejar memorias independientes.
+        // configuración para crear hilos de conversación en el agente y manejar memorias independientes por asesor
         const config = {
             configurable: {
-                thread_id: fromNumber,
+                thread_id: `${advisor.id}_${fromNumber}`, // Usar el mismo thread_id que globalConfig
                 phone_number: fromNumber,
+                advisor_id: advisor.id
             },
         };
         let agentOutput;
@@ -871,10 +917,19 @@ router.post("/asadores/receive-message", async (req, res) => {
         }
         const responseMessage = lastMessage.content;
         console.log("Respuesta IA:", responseMessage);
+        // 🔍 VALIDACIÓN: Mostrar a qué número se enviará la respuesta
+        console.log("📤 === AI RESPONSE ROUTING INFO ===");
+        console.log("Asesor:", advisor.name, `(ID: ${advisor.id})`);
+        console.log("Número del asesor:", advisor.twilio_phone_number);
+        console.log("Cliente destinatario:", fromNumber);
+        console.log("Respuesta se enviará FROM:", toNumber, "TO:", fromNumber);
+        console.log("====================================");
         // Ejecutar la función si el mensaje es del agente
-        const messageId = await saveChatHistory(fromNumber, responseMessage, false, "");
-        //consultar si esta disponible para audios
-        const isAvailableForAudio = await getAvailableForAudio(fromNumber);
+        const messageId = await saveChatHistory(fromNumber, responseMessage, false, "", undefined, undefined, undefined, // fileName
+        advisor.id // advisor_id
+        );
+        //consultar si esta disponible para audios específico para este asesor
+        const isAvailableForAudio = await getAvailableForAudio(fromNumber, advisor.id);
         // Si la respuesta es menor a 400 caracteres && no contiene números, hacer TTS y enviar el audio
         if (responseMessage.length <= 400 &&
             !/\d/.test(responseMessage) &&
@@ -899,6 +954,10 @@ router.post("/asadores/receive-message", async (req, res) => {
                     const randomDelay = getRandomDelay(15000, 25000); // Espera entre 15 y 25 segundos
                     console.log(`⏳ Delaying audio response by ${randomDelay / 1000} seconds...`);
                     await delay(randomDelay);
+                    console.log("🎵 === SENDING AUDIO MESSAGE ===");
+                    console.log("Audio FROM:", to, "TO:", from);
+                    console.log("Asesor responsable:", advisor.name, `(${advisor.twilio_phone_number})`);
+                    console.log("================================");
                     const message = await client.messages.create({
                         body: "Audio message",
                         from: to,
@@ -933,6 +992,11 @@ router.post("/asadores/receive-message", async (req, res) => {
                         const randomDelay = getRandomDelay(15000, 25000); // Espera entre 15 y 25 segundos
                         console.log(`⏳ Delaying audio response by ${randomDelay / 1000} seconds...`);
                         await delay(randomDelay);
+                        console.log("💬 === SENDING TEXT MESSAGE ===");
+                        console.log("Text FROM:", to, "TO:", from);
+                        console.log("Asesor responsable:", advisor.name, `(${advisor.twilio_phone_number})`);
+                        console.log("Message part:", part.substring(0, 50) + "...");
+                        console.log("===============================");
                         const message = await client.messages.create({
                             body: part,
                             from: to,
@@ -952,6 +1016,11 @@ router.post("/asadores/receive-message", async (req, res) => {
                     const randomDelay = getRandomDelay(15000, 25000); // Espera entre 15 y 25 segundos
                     console.log(`⏳ Delaying audio response by ${randomDelay / 1000} seconds...`);
                     await delay(randomDelay);
+                    console.log("💬 === SENDING SINGLE TEXT MESSAGE ===");
+                    console.log("Text FROM:", to, "TO:", from);
+                    console.log("Asesor responsable:", advisor.name, `(${advisor.twilio_phone_number})`);
+                    console.log("Message:", responseMessage.substring(0, 100) + "...");
+                    console.log("====================================");
                     const message = await client.messages.create({
                         body: responseMessage,
                         from: to,
@@ -1008,7 +1077,7 @@ router.post("/asadores/receive-message", async (req, res) => {
 router.post("/asadores/chat-dashboard", async (req, res) => {
     try {
         const twiml = new MessagingResponse();
-        const { clientNumber, newMessage, userName, fileName } = req.body;
+        const { clientNumber, newMessage, userName, fileName, advisorId, twilioPhoneNumber } = req.body;
         const isAudioMessage = await newMessage.includes("https://firebasestorage.googleapis.com/v0/b/ultim-admin-dashboard.appspot.com/o/audios");
         const isFileMessage = await newMessage.includes("https://firebasestorage.googleapis.com/v0/b/ultim-admin-dashboard.appspot.com/o/documents");
         console.log("📎 Dashboard message - isFileMessage:", isFileMessage, "fileName:", fileName || "not provided");
@@ -1056,13 +1125,17 @@ router.post("/asadores/chat-dashboard", async (req, res) => {
                 console.log("Audio URL:", audioUrl);
                 // Guardar el mensaje con la URL original del dashboard
                 const messageId = await saveChatHistory(clientNumber, "Audio message", false, newMessage, // URL original del dashboard
-                userName);
+                userName, undefined, // origin
+                undefined, // fileName
+                advisorId // advisor_id
+                );
                 // Envía el archivo de audio a través de Twilio
                 const message = await client.messages.create({
                     body: "Audio message",
                     to: `whatsapp:${clientNumber}`,
                     // from: "whatsapp:+5742044644",
-                    from: `whatsapp:+14155238886`,
+                    // from: `whatsapp:+14155238886`,
+                    from: `whatsapp:${twilioPhoneNumber}`,
                     mediaUrl: [audioUrl],
                     statusCallback: `${statusCallbackUrl}/asadores/webhook/status`,
                 });
@@ -1082,13 +1155,15 @@ router.post("/asadores/chat-dashboard", async (req, res) => {
             console.log("File message detected");
             // Guardar el mensaje primero
             console.log("💾 Saving file message with fileName:", fileName);
-            const messageId = await saveChatHistory(clientNumber, "Archivo enviado", false, newMessage, userName, undefined, fileName // Solo para file messages se pasa el fileName
+            const messageId = await saveChatHistory(clientNumber, "Archivo enviado", false, newMessage, userName, undefined, fileName, // Solo para file messages se pasa el fileName
+            advisorId // advisor_id
             );
             const message = await client.messages.create({
                 // body: 'Mensaje con archivo',
                 to: `whatsapp:${clientNumber}`,
                 // from: "whatsapp:+5742044644",
-                from: `whatsapp:+14155238886`,
+                // from: `whatsapp:+14155238886`,
+                from: `whatsapp:${twilioPhoneNumber}`,
                 mediaUrl: [newMessage],
                 statusCallback: `${statusCallbackUrl}/asadores/webhook/status`,
             });
@@ -1102,11 +1177,14 @@ router.post("/asadores/chat-dashboard", async (req, res) => {
         }
         else {
             // Guardar el mensaje primero
-            const messageId = await saveChatHistory(clientNumber, newMessage, false, "", userName);
+            const messageId = await saveChatHistory(clientNumber, newMessage, false, "", userName, undefined, undefined, // fileName
+            advisorId // advisor_id
+            );
             // Enviar mensaje a través de Twilio
             const message = await client.messages.create({
                 // from: "whatsapp:+5742044644",
-                from: `whatsapp:+14155238886`,
+                // from: `whatsapp:+14155238886`,
+                from: `whatsapp:${twilioPhoneNumber}`,
                 to: `whatsapp:${clientNumber}`,
                 body: newMessage,
                 statusCallback: `${statusCallbackUrl}/asadores/webhook/status`,
@@ -1132,11 +1210,12 @@ router.post("/asadores/chat-dashboard", async (req, res) => {
 });
 // Ruta para enviar una plantilla de WhatsApp
 router.post("/asadores/send-template", async (req, res) => {
-    const { to, templateId, name, agentName, user } = req.body;
+    const { to, templateId, name, agentName, user, advisorId, twilioPhoneNumber } = req.body; // Agregar advisorId
     try {
         const message = await client.messages.create({
             // from: "whatsapp:+5742044644",
-            from: `whatsapp:+14155238886`,
+            // from: `whatsapp:+14155238886`,
+            from: `whatsapp:${twilioPhoneNumber}`,
             to: `whatsapp:${to}`,
             contentSid: templateId,
             // messagingServiceSid: "MGe5ebd75ff86ad20dbe6c0c1d09bfc081",
@@ -1148,8 +1227,9 @@ router.post("/asadores/send-template", async (req, res) => {
         // Traer el mensaje de la plantilla desde el endpoint /message/:sid con axios
         const response = await axios.get(`https://ultim.online/asadores/message/${message.sid}`);
         console.log("response", response.data.message.body);
-        // Guardar el mensaje en la base de datos (simulado)
-        const messageId = await saveTemplateChatHistory(to, response.data.message.body, false, "", user);
+        // Guardar el mensaje en la base de datos con advisor específico
+        const messageId = await saveTemplateChatHistory(to, response.data.message.body, false, "", user, advisorId // Pasar advisorId para asociar plantilla al asesor correcto
+        );
         if (messageId && message.sid) {
             await updateMessageTwilioSid(messageId, message.sid);
         }

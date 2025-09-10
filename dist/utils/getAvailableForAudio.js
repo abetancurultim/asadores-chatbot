@@ -8,25 +8,35 @@ const supabaseKey = process.env.SUPABASE_KEY;
 const CHAT_HISTORY_TABLE = "chat_history";
 export const supabase = createClient(supabaseUrl, supabaseKey);
 // Función para consultar si una persona está disponible para mandarle audios
-export async function getAvailableForAudio(clientNumber) {
+export async function getAvailableForAudio(clientNumber, advisorId) {
     try {
-        // Verificar si el cliente ya tiene una conversación
-        const { data: existingConversation, error: fetchError } = await supabase
+        // Verificar si el cliente ya tiene una conversación con este asesor específico
+        let conversationQuery = supabase
             .from(CHAT_HISTORY_TABLE)
-            .select('audio')
+            .select('audio, advisor_id')
             .eq('client_number', clientNumber)
-            .maybeSingle();
+            .order("created_at", { ascending: false })
+            .limit(1);
+        // Si tenemos advisor_id, buscar conversación específica de ese asesor
+        if (advisorId) {
+            conversationQuery = conversationQuery.eq("advisor_id", advisorId);
+        }
+        const { data: existingConversation, error: fetchError } = await conversationQuery.maybeSingle();
         if (fetchError) {
-            console.error(`Error fetching data: ${fetchError.message}`);
+            console.error(`Error fetching data in getAvailableForAudio: ${fetchError.message}`);
+            console.error(`Client number: ${clientNumber}, Advisor ID: ${advisorId}`);
             return null;
         }
         if (existingConversation) {
+            console.log(`🔊 Found audio setting for ${clientNumber} with advisor ${advisorId || 'any'}: audio=${existingConversation.audio}`);
             return existingConversation.audio;
         }
+        console.log(`🔇 No conversation found for ${clientNumber} with advisor ${advisorId || 'any'}`);
         return null;
     }
     catch (error) {
         console.error('Error in getAvailableForAudio:', error);
+        console.error(`Client number: ${clientNumber}, Advisor ID: ${advisorId}`);
         return null;
     }
 }
